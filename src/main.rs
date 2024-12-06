@@ -25,6 +25,7 @@ pub enum Expr {
     Number(u64),
     BinOp(Box<Expr>, Op, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
+    Method(Box<Expr>, String, Vec<Expr>),
     Function(Rc<(Vec<String>, Expr)>),
 }
 
@@ -35,10 +36,18 @@ pub enum Op {
     Mul,
     Div,
     Mod,
+    Equals,
+    NotEquals,
+    LT,
+    GT,
+    LE,
+    GE,
 }
 impl Op {
     fn precedence(&self) -> u32 {
         match self {
+            Op::Equals | Op::NotEquals => 50,
+            Op::LT | Op::GT | Op::LE | Op::GE => 60,
             Op::Add | Op::Sub => 70,
             Op::Mul | Op::Div | Op::Mod => 80,
         }
@@ -53,6 +62,11 @@ impl TryFrom<&TokenType> for Op {
             TokenType::Star => Op::Mul,
             TokenType::Slash => Op::Div,
             TokenType::Percent => Op::Mod,
+            TokenType::EqualsEquals => Op::Equals,
+            TokenType::LessThan => Op::LT,
+            TokenType::LessEqual => Op::LE,
+            TokenType::GreaterThan => Op::GT,
+            TokenType::GreaterEqual => Op::GE,
             _ => return Err(()),
         })
     }

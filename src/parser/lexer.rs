@@ -18,6 +18,11 @@ pub enum TokenType {
     Star,
     Slash,
     Percent,
+    EqualsEquals,
+    GreaterThan,
+    LessThan,
+    GreaterEqual,
+    LessEqual,
     Number(u64),
     LParen,
     RParen,
@@ -26,6 +31,7 @@ pub enum TokenType {
     LBracket,
     RBracket,
     Arrow,
+    Dot,
     Eof,
 }
 
@@ -58,12 +64,27 @@ impl<'a> Lexer<'a> {
                 Some('*') => TokenType::Star,
                 Some('/') => TokenType::Slash,
                 Some('%') => TokenType::Percent,
+                Some('<') => {
+                    if self.chars.next_if_eq(&'=').is_some() {
+                        TokenType::LessThan
+                    } else {
+                        TokenType::LessEqual
+                    }
+                }
+                Some('>') => {
+                    if self.chars.next_if_eq(&'=').is_some() {
+                        TokenType::GreaterThan
+                    } else {
+                        TokenType::GreaterEqual
+                    }
+                }
                 Some('(') => TokenType::LParen,
                 Some(')') => TokenType::RParen,
                 Some('{') => TokenType::LBrace,
                 Some('}') => TokenType::RBrace,
                 Some('[') => TokenType::LBracket,
                 Some(']') => TokenType::RBracket,
+                Some('.') => TokenType::Dot,
                 Some(c @ ('a'..='z' | 'A'..='Z')) => {
                     let mut s = String::new();
                     s.push(c);

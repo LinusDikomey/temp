@@ -3,5 +3,7 @@ y = 12
 x
 x + y * 20
 f = x -> 2 * x
-l = list(1 2 3)
-f(12)
+list(1 2 3)
+	.map(x -> 2 * x)
+	.filter(x -> x > 3)
+	.print()

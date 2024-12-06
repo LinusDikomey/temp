@@ -56,7 +56,7 @@ impl<'a> Parser<'a> {
 
     fn parse_factor(&mut self) -> Expr {
         let tok = self.lexer.next();
-        let expr = match tok.ty {
+        let mut expr = match tok.ty {
             TokenType::Ident(name) => {
                 if self.lexer.peek().ty == TokenType::Equals {
                     self.lexer.next();
@@ -69,30 +69,53 @@ impl<'a> Parser<'a> {
             TokenType::Number(n) => Expr::Number(n),
             tok => panic!("unexpected token while parsing expr: {tok:?}"),
         };
-        match self.lexer.peek().ty {
-            TokenType::LParen => {
-                self.lexer.next();
-                let mut args = Vec::new();
-                loop {
-                    if self.lexer.peek().ty == TokenType::RParen {
-                        self.lexer.next();
-                        break;
-                    }
-                    args.push(self.parse_expr());
+        loop {
+            expr = match self.lexer.peek().ty {
+                TokenType::LParen => {
+                    let args = self.parse_arguments();
+                    Expr::Call(Box::new(expr), args)
                 }
-                Expr::Call(Box::new(expr), args)
-            }
-            TokenType::Arrow => {
-                self.lexer.next();
-                let params = match expr {
-                    Expr::Ident(name) => vec![name],
-                    _ => panic!("invalid param expression for function definition"),
-                };
-                let body = self.parse_expr();
-                Expr::Function(Rc::new((params, body)))
-            }
-            _ => expr,
+                TokenType::Arrow => {
+                    self.lexer.next();
+                    let params = match expr {
+                        Expr::Ident(name) => vec![name],
+                        _ => panic!("invalid param expression for function definition"),
+                    };
+                    let body = self.parse_expr();
+                    Expr::Function(Rc::new((params, body)))
+                }
+                TokenType::Dot => {
+                    self.lexer.next();
+                    let name = self.lexer.next();
+                    let TokenType::Ident(name) = name.ty else {
+                        panic!("name expected after dot");
+                    };
+                    let args = if self.lexer.peek().ty == TokenType::LParen {
+                        self.parse_arguments()
+                    } else {
+                        vec![self.parse_expr()]
+                    };
+                    Expr::Method(Box::new(expr), name, args)
+                }
+                _ => break expr,
+            };
         }
+    }
+
+    fn parse_arguments(&mut self) -> Vec<Expr> {
+        let lparen = self.lexer.next();
+        if lparen.ty != TokenType::LParen {
+            panic!("expected lparen");
+        }
+        let mut args = Vec::new();
+        loop {
+            if self.lexer.peek().ty == TokenType::RParen {
+                self.lexer.next();
+                break;
+            }
+            args.push(self.parse_expr());
+        }
+        args
     }
 
     fn parse_bin_op_rhs(&mut self, expr_prec: u32, mut lhs: Expr) -> Expr {
