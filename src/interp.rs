@@ -8,11 +8,15 @@ pub fn interp(ast: &crate::parser::Ast) {
         ("map", Builtin::Map),
         ("filter", Builtin::Filter),
         ("print", Builtin::Print),
+        ("if", Builtin::If),
+        ("else", Builtin::Else),
+        ("read", Builtin::Read),
     ];
-    let vars = builtins
+    let mut vars: HashMap<_, _> = builtins
         .into_iter()
         .map(|(name, builtin)| (name.to_owned(), Value::Function(Function::Builtin(builtin))))
         .collect();
+    vars.insert("none".to_owned(), Value::None);
     let mut interp = Interp { vars };
     for expr in &ast.top_level {
         interp.eval(expr);
@@ -23,6 +27,13 @@ struct Interp {
     vars: HashMap<String, Value>,
 }
 impl Interp {
+    fn eval_lazy(&mut self, lazy: Lazy) -> Value {
+        match lazy {
+            Lazy::Expr(expr) => self.eval(expr),
+            Lazy::Value(value) => value,
+        }
+    }
+
     fn eval(&mut self, expr: &Expr) -> Value {
         match expr {
             Expr::Ident(name) => self
@@ -36,6 +47,7 @@ impl Interp {
                 value
             }
             &Expr::Number(n) => Value::Number(n.try_into().unwrap()),
+            Expr::String(s) => Value::String(s.clone()),
             Expr::BinOp(l, op, r) => {
                 let l = self.eval(l);
                 let r = self.eval(r);
@@ -63,62 +75,110 @@ impl Interp {
                 Value::Number(n)
             }
             Expr::Call(called, args) => {
-                let Value::Function(func) = self.eval(called) else {
-                    panic!("can't call non-function");
-                };
-                let args: Vec<Value> = args.iter().map(|arg| self.eval(arg)).collect();
-                self.call_function(&func, args.into_iter())
+                let func = self.eval(called);
+                self.call_function(func, args.iter().map(Lazy::Expr))
             }
             Expr::Method(lhs, name, args) => {
-                let Value::Function(func) = self
+                let func = self
                     .vars
                     .get(name)
                     .cloned()
-                    .unwrap_or_else(|| panic!("unknown method name '{name}'"))
-                else {
-                    panic!("can't call non-function");
-                };
-                let args: Vec<Value> = std::iter::once(&**lhs)
-                    .chain(args.iter())
-                    .map(|arg| self.eval(arg))
-                    .collect();
-                self.call_function(&func, args.into_iter())
+                    .unwrap_or_else(|| panic!("unknown method name '{name}'"));
+                self.call_function(
+                    func,
+                    std::iter::once(&**lhs).chain(args.iter()).map(Lazy::Expr),
+                )
             }
             Expr::Function(func) => Value::Function(Function::UserDefined(func.clone())),
+            Expr::Tuple(args) => Value::List(args.iter().map(|arg| self.eval(arg)).collect()),
         }
     }
 
-    fn call_function(
+    fn call_function<'a>(
         &mut self,
-        function: &Function,
-        args: impl ExactSizeIterator<Item = Value>,
+        function: Value,
+        args: impl IntoIterator<Item = Lazy<'a>>,
     ) -> Value {
         match function {
-            Function::Builtin(builtin) => builtin.call(self, args.collect()),
-            Function::UserDefined(func) => {
-                if args.len() != func.0.len() {
-                    panic!("invalid argument count");
-                }
-                for (name, value) in func.0.iter().zip(args) {
+            Value::Function(Function::Builtin(builtin)) => builtin.call(self, args),
+            Value::Function(Function::UserDefined(func)) => {
+                let mut args = args.into_iter();
+                let mut count = 0;
+                for (name, value) in func.0.iter().zip(&mut args) {
+                    count += 1;
+                    let value = self.eval_lazy(value);
                     self.vars.insert(name.clone(), value);
+                }
+                if count < func.0.len() {
+                    panic!(
+                        "not enough arguments, expected {} but got {}",
+                        func.0.len(),
+                        count
+                    );
+                }
+                let extra = args.count();
+                if extra != 0 {
+                    panic!(
+                        "too many arguments, expected {count} but got {}",
+                        count + extra
+                    );
                 }
                 self.eval(&func.1)
             }
+            Value::List(list) => {
+                let mut args = args.into_iter();
+                let (Some(index), None) = (args.next(), args.next()) else {
+                    panic!("expected one argument for list index");
+                };
+                let Value::Number(n) = self.eval_lazy(index) else {
+                    panic!("expected an integer index");
+                };
+                list.get(n as usize)
+                    .expect("list index out of bounds")
+                    .clone()
+            }
+            Value::String(s) => {
+                let mut args = args.into_iter();
+                let (Some(index), None) = (args.next(), args.next()) else {
+                    panic!("expected one argument for list index");
+                };
+                let Value::Number(n) = self.eval_lazy(index) else {
+                    panic!("expected an integer index");
+                };
+                let &byte = s
+                    .as_bytes()
+                    .get(n as usize)
+                    .expect("string index out of bounds");
+                Value::String(
+                    String::from_utf8(vec![byte])
+                        .expect("invalid codepoint at index")
+                        .into(),
+                )
+            }
+            value => panic!("can't call value {value}"),
         }
     }
+}
+
+enum Lazy<'a> {
+    Expr(&'a Expr),
+    Value(Value),
 }
 
 #[derive(Clone, Debug)]
 pub enum Value {
     Number(i64),
+    String(Rc<str>),
     Function(Function),
     List(Vec<Value>),
     None,
+    IfNone,
 }
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Number(n) => write!(f, "{n}"),
+            Value::String(s) => write!(f, "{s}"),
             Value::Function(_) => write!(f, "<function>"),
             Value::List(list) => {
                 write!(f, "[")?;
@@ -133,7 +193,8 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
-            Value::None => todo!(),
+            Value::None => write!(f, "none"),
+            Value::IfNone => write!(f, "ifnone"),
         }
     }
 }
@@ -141,9 +202,11 @@ impl Value {
     fn truthy(&self) -> bool {
         match self {
             &Value::Number(n) => n != 0,
+            Value::String(s) => !s.is_empty(),
             Value::Function(_) => true,
             Value::List(l) => !l.is_empty(),
             Value::None => false,
+            Value::IfNone => false,
         }
     }
 }
@@ -151,12 +214,15 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Number(x), Self::Number(y)) => x == y,
+            (Self::String(x), Self::String(y)) => x == y,
             (Self::Function(_), Self::Function(_)) => {
                 panic!("don't compare functions you idiot")
             }
             (Self::List(x), Self::List(y)) => {
                 x.len() == y.len() && x.iter().zip(y).all(|(a, b)| a == b)
             }
+            (Self::None, Self::None) => true,
+            (Self::IfNone, Self::IfNone) => true,
             _ => false,
         }
     }
@@ -174,30 +240,40 @@ pub enum Builtin {
     Map,
     Filter,
     Print,
+    If,
+    Else,
+    Read,
 }
 impl Builtin {
-    fn call(&self, interp: &mut Interp, args: Vec<Value>) -> Value {
+    fn call<'a>(&self, interp: &mut Interp, args: impl IntoIterator<Item = Lazy<'a>>) -> Value {
+        let mut args = args.into_iter();
         match self {
-            Builtin::List => Value::List(args),
+            Builtin::List => Value::List(args.map(|arg| interp.eval_lazy(arg)).collect()),
             Builtin::Map => {
-                let [Value::List(list), Value::Function(func)] = args.as_slice() else {
+                let (Some(a), Some(b), None) = (args.next(), args.next(), args.next()) else {
+                    panic!("invalid argument count for map, expected 2");
+                };
+                let [Value::List(list), func] = [a, b].map(|v| interp.eval_lazy(v)) else {
                     panic!("expected 2 arguments of type (list, function) map");
                 };
                 let list = list
                     .iter()
-                    .map(|item| interp.call_function(func, [item.clone()].into_iter()))
+                    .map(|item| interp.call_function(func.clone(), [Lazy::Value(item.clone())]))
                     .collect();
                 Value::List(list)
             }
             Builtin::Filter => {
-                let [Value::List(list), Value::Function(func)] = args.as_slice() else {
+                let (Some(a), Some(b), None) = (args.next(), args.next(), args.next()) else {
+                    panic!("invalid argument count for map, expected 2");
+                };
+                let [Value::List(list), func] = [a, b].map(|v| interp.eval_lazy(v)) else {
                     panic!("expected 2 arguments of type (list, function) filter");
                 };
                 let list = list
                     .iter()
                     .filter(|&item| {
                         interp
-                            .call_function(func, [item.clone()].into_iter())
+                            .call_function(func.clone(), [Lazy::Value(item.clone())])
                             .truthy()
                     })
                     .cloned()
@@ -212,9 +288,49 @@ impl Builtin {
                     } else {
                         print!(" ");
                     }
-                    print!("{arg}");
+                    let value = interp.eval_lazy(arg);
+                    print!("{value}");
                 }
+                println!();
                 Value::None
+            }
+            Builtin::If => {
+                let cond = args.next().expect("if needs a condition");
+                if interp.eval_lazy(cond).truthy() {
+                    let mut value = Value::None;
+                    for arg in args {
+                        value = interp.eval_lazy(arg);
+                    }
+                    if value == Value::IfNone {
+                        Value::None
+                    } else {
+                        value
+                    }
+                } else {
+                    Value::IfNone
+                }
+            }
+            Builtin::Else => {
+                let cond = args.next().expect("else needs a condition");
+                let cond = interp.eval_lazy(cond);
+                if cond == Value::IfNone {
+                    let mut value = Value::None;
+                    for arg in args {
+                        value = interp.eval_lazy(arg);
+                    }
+                    value
+                } else {
+                    cond
+                }
+            }
+            Builtin::Read => {
+                let (Some(file), None) = (args.next(), args.next()) else {
+                    panic!("expected 1 argument for read");
+                };
+                let Value::String(file) = interp.eval_lazy(file) else {
+                    panic!("expected a string for read");
+                };
+                std::fs::read_to_string(&*file).map_or(Value::None, |s| Value::String(s.into()))
             }
         }
     }

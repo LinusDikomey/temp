@@ -1,0 +1,3 @@
+
+input = read("../aoc2024/input/day1.txt")
+print(input)

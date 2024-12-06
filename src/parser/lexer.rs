@@ -24,6 +24,7 @@ pub enum TokenType {
     GreaterEqual,
     LessEqual,
     Number(u64),
+    String(String),
     LParen,
     RParen,
     LBrace,
@@ -104,6 +105,28 @@ impl<'a> Lexer<'a> {
                         s.push(self.chars.next().unwrap());
                     }
                     TokenType::Number(s.parse().unwrap())
+                }
+                Some('"') => {
+                    let mut s = String::new();
+                    loop {
+                        s.push(match self.chars.next() {
+                            Some('"') => break,
+                            Some('\\') => match self
+                                .chars
+                                .next()
+                                .expect("unexpected end of file in string literal escape")
+                            {
+                                'n' => '\n',
+                                'r' => '\r',
+                                't' => '\t',
+                                '\\' => '\\',
+                                c => panic!("unknown string escape character '{c}'"),
+                            },
+                            Some(c) => c,
+                            None => panic!("unexpected end of file in string literal"),
+                        });
+                    }
+                    TokenType::String(s)
                 }
                 Some(c) => panic!("unexpected token {c}"),
                 None => TokenType::Eof,

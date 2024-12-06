@@ -23,10 +23,12 @@ pub enum Expr {
     Ident(String),
     Assign(String, Box<Expr>),
     Number(u64),
+    String(Rc<str>),
     BinOp(Box<Expr>, Op, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     Method(Box<Expr>, String, Vec<Expr>),
     Function(Rc<(Vec<String>, Expr)>),
+    Tuple(Vec<Expr>),
 }
 
 #[derive(Debug, Clone, Copy)]

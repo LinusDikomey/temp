@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use lexer::Lexer;
+use lexer::{Lexer, Token};
 
 use crate::{error::Errors, Expr, Op};
 
@@ -66,19 +66,31 @@ impl<'a> Parser<'a> {
                     Expr::Ident(name)
                 }
             }
+            TokenType::LParen => Expr::Tuple(self.parse_arguments(tok)),
             TokenType::Number(n) => Expr::Number(n),
+            TokenType::String(s) => Expr::String(s.into()),
             tok => panic!("unexpected token while parsing expr: {tok:?}"),
         };
         loop {
             expr = match self.lexer.peek().ty {
                 TokenType::LParen => {
-                    let args = self.parse_arguments();
+                    let tok = self.lexer.next();
+                    let args = self.parse_arguments(tok);
                     Expr::Call(Box::new(expr), args)
                 }
                 TokenType::Arrow => {
                     self.lexer.next();
                     let params = match expr {
                         Expr::Ident(name) => vec![name],
+                        Expr::Tuple(args) => args
+                            .into_iter()
+                            .map(|arg| {
+                                let Expr::Ident(name) = arg else {
+                                    panic!("invalid param expression for function argument");
+                                };
+                                name
+                            })
+                            .collect(),
                         _ => panic!("invalid param expression for function definition"),
                     };
                     let body = self.parse_expr();
@@ -91,7 +103,8 @@ impl<'a> Parser<'a> {
                         panic!("name expected after dot");
                     };
                     let args = if self.lexer.peek().ty == TokenType::LParen {
-                        self.parse_arguments()
+                        let tok = self.lexer.next();
+                        self.parse_arguments(tok)
                     } else {
                         vec![self.parse_expr()]
                     };
@@ -102,8 +115,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_arguments(&mut self) -> Vec<Expr> {
-        let lparen = self.lexer.next();
+    fn parse_arguments(&mut self, lparen: Token) -> Vec<Expr> {
+        debug_assert_eq!(lparen.ty, TokenType::LParen);
         if lparen.ty != TokenType::LParen {
             panic!("expected lparen");
         }
